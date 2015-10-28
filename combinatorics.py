@@ -18,7 +18,7 @@ Hanwen Wu <steinwaywhw@gmail.com>
 
 """
 
-import copy, functools, math
+import copy, functools, math, fractions, sys, pprint, shutil
 
 def partition(n):
 	"""
@@ -143,19 +143,32 @@ def _ball_in_bin(ball, bins, index):
 
 	return retbins
 
-# y = balls_in_bins([1,1,1], [[]] * 2)
 
 def young_diagram(partition):
 	"""
 	Turn a l-partition (list of lists) into a proper 
-	young diagram representation
+	young diagram representation. This one only fills the box with col - row.
 
-	e.g. [[2, 1], [3]] => [[ [ [],[] ],  [   [[],[],[]] ]]
-							 [ []    ]], 
+	Its format is 
 
-	e.g. [[], [1]] => [ [], [[ []  ]]]
+	diag [
+		part [
+			row [
+				box (integer),
+				box, 
+				box,
+				...
+			],
 
-	Its format is diag(part(row(boxes())))
+			row [
+				...
+			]
+		],
+
+		part [
+			...
+		]
+	]
 
 	Args: 
 		partition: one l-partition, e.g. [[2, 1], [3]]. Each part in the partition should be in decreasing order
@@ -176,53 +189,287 @@ def young_diagram(partition):
 
 	return [to_rows(part) for part in partition]
 
-
-def pretty_young_diagram(diag, n):
+def extended_young_diagram(diag, l, k, s):
 	"""
-	Turn a young diagram of original integer n into human readable format
+	This one extend a normal young diagram with s_content, and annotate boxes with more info 
+
+	box = (sign, content, s_content, c_box, part, row, col)
+	"""
+
+	extdiag = []
+
+	has_box = lambda diag, part, row, col: 0 <= part < len(diag) and 0 <= row < len(diag[part]) and 0 <= col < len(diag[part][row])
+
+	for part in range(len(diag)):
+		ret_part = []
+		for row in range(len(diag[part]) + 1):
+			ret_row = []
+
+			# one of the addable box case
+			if row == len(diag[part]):
+				col = 0
+
+				box = dict()
+				box["part"] = part 
+				box["row"] = row 
+				box["col"] = col 
+				box["content"] = col - row 
+				box["s_content"] = col - row + s[part]
+				box["c_box"] = k * l * box["s_content"] - part
+
+				# addable box
+				box["sign"] = "+"
+
+				ret_row = ret_row + [box]
+
+			# other cases, when row < len(diag[part])
+			else:
+				for col in range(len(diag[part][row]) + 1):
+				
+					box = dict()
+					box["part"] = part 
+					box["row"] = row 
+					box["col"] = col 
+					box["content"] = col - row 
+					box["s_content"] = col - row + s[part]
+					box["c_box"] = k * l * box["s_content"] - part
+
+					if has_box(diag, part, row, col):
+						# removable box
+						if col == len(diag[part][row]) - 1 and not has_box(diag, part, row+1, col):
+							box["sign"] = "-"
+						# regular box
+						else:
+							box["sign"] = ""
+
+					# addable box
+					elif (row == 0 and col == len(diag[part][row])) or (col == len(diag[part][row]) and has_box(diag, part, row-1, col)):
+						box["sign"] = "+"
+
+					# no box here
+					else:
+						continue
+
+					ret_row = ret_row + [box]
+
+			ret_part = ret_part + [ret_row]
+		extdiag = extdiag + [ret_part]
+
+	return extdiag
+
+def pretty_young_diagram(young, n, f_box = None):
+	"""
+	Turn an extended/standard young diagram of original integer n into human readable format
 
 	Args:
-		diag: a diagram of some l-partition of n 
+		young: a diagram of some l-partition of n 
 		n: the original integer being partitioned. we need it to decide the max width of a diagram
+		f_box: a function from box position to its content, (box, max_box) -> string
 
 	Returns:
 		A human readable string
 	"""
 
+	# default printer
+	if f_box is None:
+		f_box = lambda box, max_box: "[{:>{fill}}]".format(str(box), fill=max_box)
+
 	# find the max number of rows of a diagram
-	max_row = functools.reduce(lambda x, y: max(x, y), [len(part) for part in diag], 0)
-	max_box = functools.reduce(lambda x, y: max(x, len(str(y))), [box for part in diag for row in part for box in row], 0)
+	max_row = functools.reduce(lambda x, y: max(x, y), [len(part) for part in young], 0)
+
+	# find the max width of a box content
+	max_box = functools.reduce(lambda x, y: max(x, len(f_box(y, 0))), [box for part in young for row in part for box in row], 0) - 2
 
 	# find the max width of a part
-	max_part = (len(str(n-1)) + 3) * n
+	max_part = (len(str(n-1)) + 4) * n 
 
-	pretty_box = lambda box: "[{:>{fill}}]".format(box, fill=max_box)
-	pretty_row = lambda row: functools.reduce(lambda x, y: x + pretty_box(y), row, "")
+	ret = ""
 
-	ret = "=" * (max_part * len(diag) + 2) + "\n"
+	for row in reversed(range(max_row)):
+		for part in range(len(young)):
 
-	for row in range(max_row):
-		for part in range(len(diag)):
-			if row < len(diag[part]):
-				ret += "{:<{fill}}".format(pretty_row(diag[part][row]), fill=max_part+2) 
-			elif row == 0 and len(diag[part]) == 0 :
-				ret += "{:<{fill}}".format("empty", fill=max_part+2) 
-			else:
-				ret += "{:<{fill}}".format("", fill=max_part+2) 
+			# no such row
+			if row >= len(young[part]):
+				ret += "{:<{fill}}|".format("", fill=max_part+2) 
+				continue
 
-		ret += "\n"
+			# no such part
+			if row == 0 and len(young[part]) == 0:
+				ret += "{:<{fill}}|".format("empty", fill=max_part+2) 
+				continue
+
+			# normal case
+			ret_row = ""
+			for box in young[part][row]:
+				ret_row += f_box(box, max_box)
+
+			ret += "{:<{fill}}|".format(ret_row, fill=max_part+2) 
+
+		if not row == 0:
+			ret += "\n"
 
 	return ret 
 
+def pretty_ext_box(box, max_box):
+	if box["sign"] == "":
+		return "[{:>{fill}}]".format(str(box["s_content"]), fill=max_box)
+
+	if box["sign"] == "+":
+		return " {:>{fill}} ".format(str(box["s_content"]), fill=max_box)
+
+	if box["sign"] == "-":
+		return "({:>{fill}})".format(str(box["s_content"]), fill=max_box)
+
+def is_z_box(box, k, z):
+	"""
+	When k is rational, b is z-box if k * e * s_content_box(b) mod e == k * e * z mod e
+	"""
+
+	assert type(k) == fractions.Fraction 
+
+	ke = k.numerator
+	e = k.denominator
+
+	return ke * box["s_content"] % e == (ke * z) % e 
+
+def z_signature(extdiag, k, z):
+	z_boxes = [box for part in extdiag for row in part for box in row if box["sign"] != "" and is_z_box(box, k, z)]
+	z_boxes = sorted(z_boxes, key=lambda box: box["c_box"])
+
+	is_redex = lambda z_boxes, i: (i < len(z_boxes)-1 and z_boxes[i]["sign"] == "-" and z_boxes[i+1]["sign"] == "+") or (0 < i and z_boxes[i-1]["sign"] == "-" and z_boxes[i]["sign"] == "+")
+	has_redex = lambda z_boxes: len([box for index, box in enumerate(z_boxes) if is_redex(z_boxes, index)]) > 0
+	
+	z_boxes = [box for index, box in enumerate(z_boxes) if not is_redex(z_boxes, index)]
+	
+	while has_redex(z_boxes):
+		z_boxes = [box for index, box in enumerate(z_boxes) if not is_redex(z_boxes, index)]
+	
+	return z_boxes
+
+def normal_young_diagram(extdiag):
+	"""
+	Transform ext diag back into normal diag
+	"""
+
+	diag = []
+	for part in range(len(extdiag)):
+		part_content = []
+		for row in range(len(extdiag[part])):
+			row_content = []
+			for col in range(len(extdiag[part][row])):
+				if extdiag[part][row][col]["sign"] == "+":
+					continue
+				else: 
+					row_content += [extdiag[part][row][col]["content"]]
+
+			if len(row_content) > 0:
+				part_content += [row_content]
+			else: 
+				continue
+
+		diag += [part_content]
+
+	return diag 
+
+def e_transform(extdiag, k, z):
+	z_boxes = z_signature(extdiag, k, z)
+	diag = normal_young_diagram(extdiag)
+
+	sig = functools.reduce(lambda x, box: x + box["sign"], z_boxes, "")
+
+	n = len([box for part in extdiag for row in part for box in row if box["sign"] == ""])
+
+	print(pretty_young_diagram(extdiag, n+1, pretty_ext_box))
+	print("")
+
+	if not "-" in sig:
+		# print("{}\n".format(pretty_young_diagram(diag, n+1)))
+		return (diag, 0)
+
+	z_box = z_boxes[sig.index("-")]
+	del diag[z_box["part"]][z_box["row"]][z_box["col"]]
+	if len(diag[z_box["part"]][z_box["row"]]) == 0:
+		del diag[z_box["part"]][z_box["row"]]
+
+	# print("{}\n".format(pretty_young_diagram(diag, n+1)))
+	return (diag, -1)
+
+def e_transform_all(extdiag, n, k, s, accu, zaccu):
+
+	# if n == 0:
+		# return 0
+
+	l = len(extdiag)
+	e = k.denominator
+
+	width = shutil.get_terminal_size().columns - 1
 
 
-def test(l, n):
-	y = [young_diagram(partition) for partition in multipartition(l, n)]
-	for x in y:
-		print(pretty_young_diagram(x, n))
+	maximum = sys.maxsize * (-1)
+
+	for j in range(e):
+		z = j / k.numerator
+
+		z_sig = functools.reduce(lambda x, box: x + box["sign"], z_signature(extdiag, k, z), "")
+		title("z   ={} {}\nsig = {}".format(zaccu, int(z), z_sig), width//2)
+
+		(diag, step) = e_transform(extdiag, k, z)
+		if step == 0:
+			maximum = max(maximum, accu)
+			continue
+
+		extdiag_cont = extended_young_diagram(diag, l, k, s)
+		maximum = max(maximum, e_transform_all(extdiag_cont, n - 1, k, s, accu+1, "{} {}".format(zaccu, int(z))))
+
+	return maximum
+
+def title(msg, width):
+	print("-"*width)
+	print(msg)
+	print("-"*width)
+
+def test(l, n, k, s):
+	
+	width = shutil.get_terminal_size().columns - 1
+
+	e = k.denominator
+	lams = [extended_young_diagram(young_diagram(partition), l, k, s) for partition in multipartition(l, n)]
+	for lam in lams:
+		
+		# print one lambda
+		print("=" * width)
+		title("lambda", width)
+		print(pretty_young_diagram(lam, n, pretty_ext_box))
+		print("")
+
+		max_e = e_transform_all(lam, n, k, s, 0, "") + 1
+		title("maximum number of e-tramsform: {}".format(max_e), width)
+
+		# for every z
+		# for j in range(e):
+
+			# print("-" * width)
+			# z = j / k.numerator
+			
+			# print signature
+			# sig = "".join([box["sign"] for box in z_signature(lam, k, z)])
+			# boxes = ",".join(["{}".format(box["s_content"]) for box in z_signature(lam, k, z)])
+			# print("{}: {:<{fill}}{}".format(z, sig, boxes, fill=10))
+			# print("")
+
+			# # transform to 0
+			# (diag, step) = e_transform(x, k, z)
+			# extdiag = extended_young_diagram(diag, l, k, s)
+
+			# while step != 0:
+				# (diag, step) = e_transform 
+
+			# print(pretty_young_diagram(extdiag, n + step, pretty_ext_box))
+		
 		input("")
 	
-test(2, 9)
+# test 2-partition of 3, with k = -1/2, s=(0, -1)
+test(2, 3, fractions.Fraction(-1, 2), [0, -1])
 
 
 
