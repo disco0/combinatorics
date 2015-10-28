@@ -257,7 +257,7 @@ def extended_young_diagram(diag, l, k, s):
 
 	return extdiag
 
-def pretty_young_diagram(young, n, f_box = None):
+def pretty_young_diagram(young, level, f_box = None):
 	"""
 	Turn an extended/standard young diagram of original integer n into human readable format
 
@@ -270,6 +270,9 @@ def pretty_young_diagram(young, n, f_box = None):
 		A human readable string
 	"""
 
+	# compute original n 
+	n = len([box for part in young for row in part for box in row if type(box) is int or box["sign"] == "" or box["sign"] == "-"])
+
 	# default printer
 	if f_box is None:
 		f_box = lambda box, max_box: "[{:>{fill}}]".format(str(box), fill=max_box)
@@ -281,21 +284,26 @@ def pretty_young_diagram(young, n, f_box = None):
 	max_box = functools.reduce(lambda x, y: max(x, len(f_box(y, 0))), [box for part in young for row in part for box in row], 0) - 2
 
 	# find the max width of a part
-	max_part = (len(str(n-1)) + 4) * n 
+	# max_part = (len(str(n)) + 4) * (n+1)
+	find_max_part = lambda part: functools.reduce(lambda x, y: max(x, len(y)), [row for row in part], 0) * (len(str(n)) + 3)
+	max_part = [find_max_part(part) for part in young]
 
-	ret = ""
+	# indentation
+	indent = "    " * level
+
+	ret = indent + "|"
 
 	for row in reversed(range(max_row)):
 		for part in range(len(young)):
 
 			# no such row
 			if row >= len(young[part]):
-				ret += "{:<{fill}}|".format("", fill=max_part+2) 
+				ret += "{:<{fill}}|".format("", fill=max_part[part]+2) 
 				continue
 
 			# no such part
 			if row == 0 and len(young[part]) == 0:
-				ret += "{:<{fill}}|".format("empty", fill=max_part+2) 
+				ret += "{:<{fill}}|".format("empty", fill=max_part[part]+2) 
 				continue
 
 			# normal case
@@ -303,10 +311,10 @@ def pretty_young_diagram(young, n, f_box = None):
 			for box in young[part][row]:
 				ret_row += f_box(box, max_box)
 
-			ret += "{:<{fill}}|".format(ret_row, fill=max_part+2) 
+			ret += "{:<{fill}}|".format(ret_row, fill=max_part[part]+2) 
 
 		if not row == 0:
-			ret += "\n"
+			ret += "\n" + indent + "|"
 
 	return ret 
 
@@ -333,14 +341,32 @@ def is_z_box(box, k, z):
 	return ke * box["s_content"] % e == (ke * z) % e 
 
 def z_signature(extdiag, k, z):
+	"""
+	Compute the z-signature for an extended young diagram 
+
+	Args: 
+		extdiag: the extended young diagram
+		k: the k 
+		z: the z
+
+	Returns:
+		a list of extended z boxes in c_box increasing order
+	"""
+
+	# get all z-addable boxes and z-removable boxes
 	z_boxes = [box for part in extdiag for row in part for box in row if box["sign"] != "" and is_z_box(box, k, z)]
+
+	# sort into c_box increasing order
 	z_boxes = sorted(z_boxes, key=lambda box: box["c_box"])
 
+	# predicate for "-+"
 	is_redex = lambda z_boxes, i: (i < len(z_boxes)-1 and z_boxes[i]["sign"] == "-" and z_boxes[i+1]["sign"] == "+") or (0 < i and z_boxes[i-1]["sign"] == "-" and z_boxes[i]["sign"] == "+")
+
+	# predicate for having a "-+"
 	has_redex = lambda z_boxes: len([box for index, box in enumerate(z_boxes) if is_redex(z_boxes, index)]) > 0
 	
+	# reduce until there is no "-+" anymore
 	z_boxes = [box for index, box in enumerate(z_boxes) if not is_redex(z_boxes, index)]
-	
 	while has_redex(z_boxes):
 		z_boxes = [box for index, box in enumerate(z_boxes) if not is_redex(z_boxes, index)]
 	
@@ -348,7 +374,7 @@ def z_signature(extdiag, k, z):
 
 def normal_young_diagram(extdiag):
 	"""
-	Transform ext diag back into normal diag
+	Transform extended young diagram back into normal young diagram
 	"""
 
 	diag = []
@@ -371,105 +397,157 @@ def normal_young_diagram(extdiag):
 
 	return diag 
 
-def e_transform(extdiag, k, z):
-	z_boxes = z_signature(extdiag, k, z)
-	diag = normal_young_diagram(extdiag)
+def pretty_z_signature(z_boxes, zpath, level):
+	"""
+	Pretty print a z-signature 
 
+	Args:
+		z_boxes: a list of z-boxes
+		zpath: z path, a list of z. the last element is the current z
+
+	Returns:
+		a pretty string 
+	"""
+
+	# get sig string
 	sig = functools.reduce(lambda x, box: x + box["sign"], z_boxes, "")
 
-	n = len([box for part in extdiag for row in part for box in row if box["sign"] == ""])
+	# get box string
+	boxes = ", ".join([str(box["s_content"]) for box in z_boxes])
 
-	print(pretty_young_diagram(extdiag, n+1, pretty_ext_box))
+	# get zpath
+	z = ", ".join([str(int(z)) for z in zpath])
+
+	# get indentation
+	indent = "    " * level 
+
+	return indent + "z = {:<10} sig = {:<10} boxes = {}".format(z, sig, boxes)
+
+def e_transform(extdiag, k, z, level):
+	"""
+	Perform one step e-transformation by removing the first 
+	removable z-box in the z-signature from extdiag
+
+	Args: 
+		extdiag: the extended young diagram for a lambda 
+		k: parameter k 
+		z: parameter z 
+		level: the current level of transformation
+
+	Returns:
+		a normal young diagram after transformation, with a step flag
+
+		step = 0  means no transformation need to be done 
+		step = -1 means one box has been removed
+	"""
+
+	# get z boxes from extdiag
+	z_boxes = z_signature(extdiag, k, z)
+
+	# transform into normal young
+	diag = normal_young_diagram(extdiag)
+
+	# compute plain text signature
+	sig = functools.reduce(lambda x, box: x + box["sign"], z_boxes, "")
+
+	print(pretty_young_diagram(extdiag, level, pretty_ext_box))
 	print("")
 
+	# if no "-", then the transformation is done
 	if not "-" in sig:
-		# print("{}\n".format(pretty_young_diagram(diag, n+1)))
 		return (diag, 0)
 
+	# otherwise, get the first "-" z-box
 	z_box = z_boxes[sig.index("-")]
+
+	# remove it from diag
 	del diag[z_box["part"]][z_box["row"]][z_box["col"]]
+
+	# clean up rows if needed
 	if len(diag[z_box["part"]][z_box["row"]]) == 0:
 		del diag[z_box["part"]][z_box["row"]]
 
-	# print("{}\n".format(pretty_young_diagram(diag, n+1)))
+
 	return (diag, -1)
 
-def e_transform_all(extdiag, n, k, s, accu, zaccu):
+def e_transform_all(extdiag, n, k, s, zpath):
+	"""
+	Recursively e-transform an extdiag until no (e...) lambda = 0
 
-	# if n == 0:
-		# return 0
+	Args:
+		extdiag: input young 
+		n: the n represented by the young 
+		k: the k 
+		s: the s vector
+		zpath: the accumulated z-path. e.g. e0 -> e1 -> e0 lambda means that the zpath is 0, 1, 0
+
+	Returns:
+		the maximum number of e transform needed to make (e ...) extdiag = 0 for any z
+	"""
 
 	l = len(extdiag)
 	e = k.denominator
 
-	width = shutil.get_terminal_size().columns - 1
-
-
+	# assume a max
 	maximum = sys.maxsize * (-1)
 
+	# for every z from 0/k.numerator to (e-1)/k.numerator
 	for j in range(e):
 		z = j / k.numerator
 
-		z_sig = functools.reduce(lambda x, box: x + box["sign"], z_signature(extdiag, k, z), "")
-		title("z   ={} {}\nsig = {}".format(zaccu, int(z), z_sig), width//2)
+		# compute the z sigature
+		z_boxes = z_signature(extdiag, k, z)
 
-		(diag, step) = e_transform(extdiag, k, z)
+		# print info 
+		title(pretty_z_signature(z_boxes, zpath + [z], len(zpath)), len(zpath))
+
+		# one step e transformation
+		(diag, step) = e_transform(extdiag, k, z, len(zpath))
+
+		# if no transformation needed, update maximum and continue to next z
 		if step == 0:
-			maximum = max(maximum, accu)
+			maximum = max(maximum, len(zpath))
 			continue
 
+		# otherwise, recursively transform
 		extdiag_cont = extended_young_diagram(diag, l, k, s)
-		maximum = max(maximum, e_transform_all(extdiag_cont, n - 1, k, s, accu+1, "{} {}".format(zaccu, int(z))))
+		maximum = max(maximum, e_transform_all(extdiag_cont, n - 1, k, s, zpath + [z]))
 
 	return maximum
 
-def title(msg, width):
-	print("-"*width)
+def title(msg, level=0, sep="-"):
+
+	width = shutil.get_terminal_size().columns - 1
+	width = width - level * 4
+
+	print("    " * level + sep*width)
 	print(msg)
-	print("-"*width)
+	print("    " * level + sep*width)
 
 def test(l, n, k, s):
 	
-	width = shutil.get_terminal_size().columns - 1
-
+	# get e
 	e = k.denominator
+
+	# get all lambda for l-partition of n
 	lams = [extended_young_diagram(young_diagram(partition), l, k, s) for partition in multipartition(l, n)]
+
+	# for every lam
 	for lam in lams:
 		
 		# print one lambda
-		print("=" * width)
-		title("lambda", width)
-		print(pretty_young_diagram(lam, n, pretty_ext_box))
+		title("lambda", 0, "=")
+		print(pretty_young_diagram(lam, 0, pretty_ext_box))
 		print("")
 
-		max_e = e_transform_all(lam, n, k, s, 0, "") + 1
-		title("maximum number of e-tramsform: {}".format(max_e), width)
+		# get maxmimum e for this lambda
+		max_e = e_transform_all(lam, n, k, s, []) + 1
+		title("maximum number of e-tramsform: {}".format(max_e), 0, ".")
 
-		# for every z
-		# for j in range(e):
-
-			# print("-" * width)
-			# z = j / k.numerator
-			
-			# print signature
-			# sig = "".join([box["sign"] for box in z_signature(lam, k, z)])
-			# boxes = ",".join(["{}".format(box["s_content"]) for box in z_signature(lam, k, z)])
-			# print("{}: {:<{fill}}{}".format(z, sig, boxes, fill=10))
-			# print("")
-
-			# # transform to 0
-			# (diag, step) = e_transform(x, k, z)
-			# extdiag = extended_young_diagram(diag, l, k, s)
-
-			# while step != 0:
-				# (diag, step) = e_transform 
-
-			# print(pretty_young_diagram(extdiag, n + step, pretty_ext_box))
-		
 		input("")
-	
+
 # test 2-partition of 3, with k = -1/2, s=(0, -1)
-test(2, 3, fractions.Fraction(-1, 2), [0, -1])
+test(2, 10, fractions.Fraction(-1, 2), [0, -1])
 
 
 
